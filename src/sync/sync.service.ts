@@ -44,7 +44,10 @@ export class SyncService{
 
         const { data, error} = await this.supabase
         .from('teste_sincronizacao')
-        .insert([payloadDestino])
+        .upsert(payloadDestino, {
+            onConflict: 'email',
+            ignoreDuplicates: false
+        })
         .select();
 
         if(error){
