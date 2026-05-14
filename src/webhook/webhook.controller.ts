@@ -1,5 +1,5 @@
 import { InjectQueue } from "@nestjs/bullmq";
-import { Body, Controller, Logger, Post } from "@nestjs/common";
+import { Body, Controller, HttpCode, HttpStatus, Logger, Post } from "@nestjs/common";
 import { Queue } from "bullmq";
 import { SyncService } from "src/sync/sync.service";
 
@@ -7,35 +7,39 @@ import { SyncService } from "src/sync/sync.service";
 export class WebhookController{
     private readonly logger = new Logger('WebhookController');
 
-    constructor(private readonly syncService: SyncService,
+    constructor(
         @InjectQueue('fila-sincronizacao') private readonly syncQueue: Queue,
     ){}
 
-    @Post('supabase')
-    async handle(@Body() payload: any) {
-    console.log('1. Recebi o Webhook!', payload.record.nome); // Log de entrada
-    
-        try {
-            await this.syncQueue.add('sincronizar-novo-cliente',payload.record,{
-                attempts: 5,
-                backoff: {
-                    type: "exponential",
-                    delay: 3000,
-                },
-                removeOnComplete: true,
-            });
+    @Post('crm_sync')
+    @HttpCode(HttpStatus.OK)
+    async handleCrmWebhook(@Body() payload: any){
+        const {event_type, record, old_record} = payload;
+        this.logger.log(`[WEBHOOK] Evento recebido do CRM: ${event_type} para ID: ${record?.id || old_record?.id}`)
 
-            this.logger.log('2. Cliente enviado para a fila com sucesso!');
-
-            return { status: 'enfileirado', cliente: payload.record.nome };
-        } catch (err) {
-            this.logger.error('ERRO AO COLOCAR NA FILA:', err.message);
-            return {status: 'erro', message: 'Falha ao processar a fila'}
+        let jobName = '';
+        if(event_type === 'INSERT'){
+            jobName = 'novo-cliente'
+        }else if(event_type === 'UPDATE'){
+            jobName = 'update-cliente'
+        }else{
+            this.logger.warn(`[WEBHOOK] Evento ${event_type} ignorado pelo orquestrador`);
+            return {message: 'Evento ignorado'}
         }
-    }
 
-    @Post('gerar-cliente')
-    async gerar(@Body() body: {nome: string, email: string}){
-        return await this.syncService.criarNovoCliente(body.nome, body.email);
+        const partyData = record;
+
+        await this.syncQueue.add(jobName, partyData, {
+            attempts: 3,
+            backoff: {
+                type: 'exponential',
+                delay: 5000,
+            },
+            removeOnComplete: true,
+        });
+
+        this.logger.log(`[WEBHOOK] job ${jobName} adicionado à fila com sucesso para a party: ${partyData.nm}`)
+
+        return { received: true };
     }
 }

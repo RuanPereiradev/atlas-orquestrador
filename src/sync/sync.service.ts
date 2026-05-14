@@ -4,57 +4,78 @@ import { metadata } from "reflect-metadata/no-conflict";
 
 export class SyncService{
     private readonly logger = new Logger(SyncService.name);
-    private supabase: SupabaseClient;
-
+    private crm: SupabaseClient;
+    private atlas: SupabaseClient;
+    private connect: SupabaseClient;
+    
     constructor(){
-        this.supabase = createClient(
-        'https://dmpnhlsreokzjikpccny.supabase.co',
-        'sb_publishable_T66RCdRBnS8R6Z9Wn9UChg_XpaEVO5A'
-        );
+        this.crm = createClient(process.env.CRM_DB_URL!, process.env.CRM_DB_KEY!);
+        this.atlas = createClient(process.env.RFOPS_DB_URL!, process.env.RFOPS_KEY!);
+        this.connect = createClient(process.env.CONNECT_URL!, process.env.CONNECT_KEY!);
     }
+    
+    async processSynchronization(target: string, party: any){
+        let result;
 
-    async criarNovoCliente(nome: string, email: string){
-        this.logger.log(`[CÓDIGO] Gerando novo cliente na tabela original: ${nome}`);
-
-        const { data, error } = await this.supabase
-        .from('clientes')
-        .insert([{nome, email}])
-        .select()
-
-        if(error){
-            this.logger.error(`[ERRO AO CRIAR ] ${error.message}`)
-            return null;
+        if(target === 'connect'){
+            result = await this.syncToConnect(party)
+        } else if(target === 'juridico'){
+            result = await this.syncToAtlas(party)
         }
-        return data[0];
+
+        if(result){
+            await this.updateStatusCrm(party.id, target, 'synced')
+        }else{
+            await this.updateStatusCrm(party.id, target, 'failed')
+        }
     }
+    private async syncToAtlas(data: any){
+        this.logger.log(`[ATLAS/Juridico] sync: ${data.nm}`);
 
-
-    async orquestrar(dadosOrigem: any){
-        this.logger.log(`[SYNC] Processando registro: ${dadosOrigem.nome}`);
-
-        const payloadDestino = {
-            nome: dadosOrigem.nome,
-            email: dadosOrigem.email,
-            origem_bu: 'SYNC_TEST_WORKSPACE',
-            metadata: {
-                original_id: dadosOrigem.id,
-                sync_at: new Date().toISOString()
-            }
+        const payload = {
+            nome: data.nm,
+            cpf: data.doc,
+            email: data.em,
+            telefone: data.tel,
+            tipo: data.tp?.toLowerCase() === 'pj' ? 'pj' : 'pf'
         };
 
-        const { data, error} = await this.supabase
-        .from('teste_sincronizacao')
-        .upsert(payloadDestino, {
-            onConflict: 'email',
-            ignoreDuplicates: false
-        })
-        .select();
+        const {error} = await this.atlas.from('clientes').upsert(payload, {onConflict:'cpf'})
+        if(error){
+            this.logger.error(`Erro Atlas: ${error.message}`);
+            return false;
+        }
+        return true;
+    }
+
+    private async syncToConnect(data: any){
+        this.logger.log(`[CONNECT] Sincronizando participante: ${data.nm}`)
+        
+        const payload = {
+            full_name: data.nm,
+            email: data.em,
+            phone: data.tel,
+            cpf: data.doc,
+            company: data.nome_fantasia || data.rs
+        };
+
+        const {error} = await this.connect.from('event_attendees').upsert(payload, {onConflict: 'email' })
+        if(error){
+            this.logger.error(`Erro Connect: ${error.message}`);
+            return false;
+        }
+        return true;
+    }
+
+    private async updateStatusCrm(partyId:number, destino: string, status: string) {
+        const { error } = await this.crm.rpc('update_party_sync_status', {
+            p_party_id: partyId,
+            p_destino: destino,
+            p_status: status
+        });
 
         if(error){
-            this.logger.error(`[ERRO] Falha ao sincronizar: ${error.message}`);
-            return;
+            this.logger.error(`Erro ao atualizar status RPC no CRM: ${error.message}`)
         }
-
-        this.logger.log(`[SUCESSO] Sincronizado! Novo ID: ${data[0].id}`)
     }
 }
