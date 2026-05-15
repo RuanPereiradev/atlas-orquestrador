@@ -6,42 +6,36 @@ import { Logger } from "@nestjs/common";
 
 @Processor('fila-sincronizacao')
 export class SyncProcessor extends WorkerHost {
+  private readonly logger = new Logger(SyncProcessor.name); 
   constructor(
-    @InjectQueue('sync-queue') private readonly syncQueue: Queue, // ✅ Agora o Nest localiza a fila  ) {
-    private readonly logger = new Logger(SyncProcessor.name),
-    private readonly syncService: SyncService,
+    @InjectQueue('fila-connect') private readonly connectQueue: Queue,
+    @InjectQueue('fila-juridico') private readonly juridicoQueue: Queue
   ){
     super();
   }
 
-  async process(job: Job<any>): Promise<any> {
-    const jobName = job.name;
-    const party = job.data; 
+  async process(job: Job<any>){
+    const party = job.data;
+    const targets = party.destinos || []
 
-    this.logger.log(`[JOB] Processando: ${jobName} ID: ${party.id}`);
+    this.logger.log(`[ROTEADOR] Encaminhando Party ID: ${party.id} para ${targets.length} destinos`);
 
-    switch (jobName) {
-      case 'novo-cliente':
-      case 'update-cliente':
+    const tarefas = targets.map(target => {
+      if(target === 'connect'){
+        return this.connectQueue.add('sync-connect', party, {
+          attempts: 5,
+          backoff: { type: 'exponential', delay: 2000 }
+        })
+      }
+      if(target === 'juridico'){
+        return this.juridicoQueue.add('sync-juridico', party,{
+          attempts: 5,
+          backoff: {type: "exponential", delay: 2000}
+        });
+      }
+    });
 
-        const targets = party.destinos || [];
-
-        for (const target of targets) {
-          try {
-
-            await this.syncService.processSynchronization(target, party);
-
-          } catch (err) {
-            const errorMessage = err instanceof Error ? err.message : String(err);
-            this.logger.error(`Falha ao sincronizar ${party.id} para ${target}: ${errorMessage}`); 
-            }
-        }
-        break;
-
-      default:
-        this.logger.warn(`Job desconhecido: ${jobName}`);
-    }
-
-    return {};
+    await Promise.all(tarefas.filter(t=>t))
+    return {roteado: true}
   }
 }

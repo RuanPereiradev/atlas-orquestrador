@@ -1,7 +1,8 @@
-import { Logger } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { metadata } from "reflect-metadata/no-conflict";
 
+@Injectable()
 export class SyncService{
     private readonly logger = new Logger(SyncService.name);
     private crm: SupabaseClient;
@@ -15,20 +16,21 @@ export class SyncService{
     }
     
     async processSynchronization(target: string, party: any){
-        let result;
+        let isSuccess = false;
 
         if(target === 'connect'){
-            result = await this.syncToConnect(party)
+            isSuccess = await this.syncToConnect(party) === true
         } else if(target === 'juridico'){
-            result = await this.syncToAtlas(party)
+            isSuccess = await this.syncToAtlas(party) === true
         }
 
-        if(result){
+        if(isSuccess){
             await this.updateStatusCrm(party.id, target, 'synced')
         }else{
             await this.updateStatusCrm(party.id, target, 'failed')
         }
     }
+
     private async syncToAtlas(data: any){
         this.logger.log(`[ATLAS/Juridico] sync: ${data.nm}`);
 
@@ -48,23 +50,33 @@ export class SyncService{
         return true;
     }
 
-    private async syncToConnect(data: any){
-        this.logger.log(`[CONNECT] Sincronizando participante: ${data.nm}`)
-        
-        const payload = {
-            full_name: data.nm,
-            email: data.em,
-            phone: data.tel,
-            cpf: data.doc,
-            company: data.nome_fantasia || data.rs
-        };
+    private async syncToConnect(record: any){
+        try {
+            const {data, error} = await this.connect
+            .from('parties')
+            .upsert({
+                name: record.nm,
+                email: record.em,
+                phone: record.tel,
+                document: record.doc,
+                type: record.tp?.toLowerCase() === 'pf' ? 'person' : 'company',
+                source: 'crm_teste'
+            },{
+                onConflict: 'email'
+            });
 
-        const {error} = await this.connect.from('event_attendees').upsert(payload, {onConflict: 'email' })
-        if(error){
-            this.logger.error(`Erro Connect: ${error.message}`);
+            if(error){
+                this.logger.error(`[CONNECT] Erro Supabae: ${error.message}`)
+                return false
+            }
+
+            this.logger.log(`[CONNECT] Sincronizado com sucesso na tabela global: ${record.nm}`)
+            return true;
+        } catch (error) {
+            this.logger.error(`[CONNECT] Erro ao sincronizar na tabela global: ${error}`)
             return false;
         }
-        return true;
+      
     }
 
     private async updateStatusCrm(partyId:number, destino: string, status: string) {
@@ -75,7 +87,9 @@ export class SyncService{
         });
 
         if(error){
-            this.logger.error(`Erro ao atualizar status RPC no CRM: ${error.message}`)
+            this.logger.error(`Erro: ${error.message}`);
+            throw new Error(error.message); 
         }
+        return true;
     }
 }

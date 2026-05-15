@@ -14,16 +14,44 @@ export class WebhookController{
     @Post('crm_sync')
     @HttpCode(HttpStatus.OK)
     async handleCrmWebhook(@Body() payload: any){
-        const {event_type, record, old_record} = payload;
-        this.logger.log(`[WEBHOOK] Evento recebido do CRM: ${event_type} para ID: ${record?.id || old_record?.id}`)
+
+        if(!payload){
+            this.logger.warn(`[WEBHOOK] Requisição recebida com body vazio`)
+            return {message: 'dados ausentes'}
+        }
+        const eventType = payload.type || payload.event_type
+        const record = payload.record
+        const oldRecord = payload.old_record
+        const activeRecord = payload.old_record
+
+        if(!record){
+            this.logger.warn(`[WEBHOOK] Requisição recebida sem dados de registros`)
+            return {message: 'dados ausentes'}
+        }
+
+        this.logger.log(`[WEBHOOK] Evento recebido do CRM: ${eventType} para ID: ${record?.id}`)
+
+        if(eventType === 'UPDATE' && record && oldRecord){
+            const relevantChange = 
+                record.nm !== oldRecord.nm ||
+                record.doc !== oldRecord.doc ||
+                record.em !== oldRecord.em ||
+                record.tel !== oldRecord.tel ||
+                JSON.stringify(record.destinos) !== JSON.stringify(oldRecord.destinos)
+
+            if(!relevantChange){
+                this.logger.log(`[WEBHOOK] Ignorando UPDATE status para ID: ${record.id} para evitar loop infinito.`);
+                return {received: true, ignored: "loop_protection"};
+            }
+        }
 
         let jobName = '';
-        if(event_type === 'INSERT'){
+        if(eventType === 'INSERT'){
             jobName = 'novo-cliente'
-        }else if(event_type === 'UPDATE'){
+        }else if(eventType === 'UPDATE'){
             jobName = 'update-cliente'
         }else{
-            this.logger.warn(`[WEBHOOK] Evento ${event_type} ignorado pelo orquestrador`);
+            this.logger.warn(`[WEBHOOK] Evento ${eventType} ignorado pelo orquestrador`);
             return {message: 'Evento ignorado'}
         }
 
