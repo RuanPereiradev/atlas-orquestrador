@@ -1,7 +1,6 @@
 version: '3.8'
 
 services:
-  # O seu Orquestrador NestJS
   orquestrador-app:
     build: .
     env_file:
@@ -15,7 +14,6 @@ services:
       - orquestrador_network
     restart: always
 
-  # O Redis para o BullMQ (Fila)
   redis_cache:
     image: redis:alpine
     container_name: orquestrador_redis

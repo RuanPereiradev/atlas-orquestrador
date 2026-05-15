@@ -9,7 +9,6 @@ describe('WebhookController', () => {
   let queueMock: any;
 
   beforeEach(async () => {
-    // Criamos um Mock (simulador) da fila do BullMQ
     queueMock = {
       add: jest.fn().mockResolvedValue({ id: 'job-id-teste' }),
     };
@@ -25,7 +24,6 @@ describe('WebhookController', () => {
     }).compile();
 
     controller = module.get<WebhookController>(WebhookController);
-    // Desativa os logs no terminal durante os testes para ficar limpo
     jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
     jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
   });
@@ -38,7 +36,6 @@ describe('WebhookController', () => {
     expect(controller).toBeDefined();
   });
 
-  // TESTE 1: INSERT LEGÍTIMO
   it('deve aceitar um evento de INSERT legítimo e adicionar à fila', async () => {
     const payloadInsert = {
       type: 'INSERT',
@@ -76,7 +73,7 @@ describe('WebhookController', () => {
         nm: 'Ruan Integracao Final',
         doc: '11122233344',
         em: 'ruan@teste.com',
-        status_sync: 'pending', // Status antigo
+        status_sync: 'pending', 
         destinos: ['connect'],
       },
     };
@@ -84,17 +81,15 @@ describe('WebhookController', () => {
     const resultado = await controller.handleCrmWebhook(payloadUpdateLoop);
 
     expect(resultado).toEqual({ received: true, ignored: 'loop_protection' });
-    // Garante que o job NÃO foi enviado para a fila do Redis
     expect(queueMock.add).not.toHaveBeenCalled();
   });
 
-  // TESTE 3: UPDATE LEGÍTIMO (ALTERAÇÃO DE DADO DO CLIENTE)
   it('deve aceitar um UPDATE se um dado relevante do cliente foi alterado', async () => {
     const payloadUpdateLegitimo = {
       type: 'UPDATE',
       record: {
         id: 14,
-        nm: 'Ruan Nome Mudou', // Nome foi alterado
+        nm: 'Ruan Nome Mudou',
         doc: '11122233344',
         em: 'ruan@teste.com',
         destinos: ['connect'],
@@ -114,11 +109,10 @@ describe('WebhookController', () => {
     expect(queueMock.add).toHaveBeenCalledWith('update-cliente', payloadUpdateLegitimo.record, expect.any(Object));
   });
 
-  // TESTE 4: PAYLOAD TOTALMENTE INVÁLIDO
   it('deve retornar mensagem de erro se o record não for enviado', async () => {
     const payloadInvalido = {
       type: 'INSERT',
-      record: null, // Testando a nossa proteção
+      record: null,
       old_record: null
     };
 
